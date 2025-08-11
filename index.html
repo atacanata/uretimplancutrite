@@ -1,0 +1,238 @@
+# Create v5 of the dashboard with robust Excel export:
+# - Tries SheetJS to write real .xlsx
+# - If CDN blocked or XLSX not present, falls back to old-school .xls (HTML table) so Excel still opens.
+html = r"""<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kesim TXT → Malzeme Bazlı Çıktı (v5)</title>
+<style>
+  :root { --bg:#0b1320; --card:#121a2a; --edge:#23324b; --acc:#4cc9f0; --ok:#22d3ee; --warn:#fbbf24; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:#e7eefc;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial}
+  header{padding:14px 16px;border-bottom:1px solid var(--edge);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  h1{margin:0;font-size:18px}
+  main{padding:14px;display:grid;grid-template-columns:360px 1fr;gap:14px}
+  .card{background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:12px}
+  .card h2{margin:0 0 8px;font-size:15px}
+  .muted{color:#93a8c7;font-size:12px}
+  textarea{width:100%;min-height:140px;border:1px solid var(--edge);border-radius:10px;background:#0f1726;color:#e7eefc;padding:10px}
+  input[type=file]{width:100%}
+  .btn{padding:10px 12px;border:0;border-radius:10px;background:#0f1726;border:1px solid var(--edge);color:#e7eefc;font-weight:600;cursor:pointer}
+  .btn.primary{background:linear-gradient(180deg,#2aa9f0,#1f92d1);border:0}
+  .btn:disabled{opacity:.6;cursor:not-allowed}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{border-bottom:1px solid #24344f;padding:8px;text-align:left;vertical-align:top}
+  th{position:sticky;top:0;background:#0f1726}
+  .ok{color:#22d3ee}
+  .warn{color:var(--warn)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Kesim TXT → Malzeme Bazlı Çıktı</h1>
+  <div class="muted">TOPLAM: <code>dosyano-sayfano,,boy,en,miktar,,,,,,,</code> • Excel indirme (.xlsx / .xls yedek)</div>
+  <div id="libStatus" class="muted"></div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1) TXT içeriği</h2>
+    <div class="muted">TXT yükle ya da metni yapıştır.</div>
+    <input type="file" id="file" accept=".txt" />
+    <div style="height:6px"></div>
+    <textarea id="paste" placeholder="Buraya 'Kesim listesi' metnini yapıştırabilirsin..."></textarea>
+    <div style="height:10px"></div>
+    <div class="row">
+      <button class="btn primary" id="runBtn">2) Çıktıyı Oluştur</button>
+      <button class="btn" id="xlsxBtn" disabled>Excel İndir</button>
+    </div>
+    <div style="height:8px"></div>
+    <div class="muted" id="meta"></div>
+  </section>
+
+  <section class="card">
+    <h2>Önizleme</h2>
+    <div style="max-height:560px;overflow:auto;border:1px solid #24344f;border-radius:10px">
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>TOPLAM</th>
+            <th>Periyot</th>
+            <th>Sayfa</th>
+            <th>Kod10</th>
+            <th>Açıklama</th>
+            <th>Boy</th>
+            <th>En</th>
+            <th>Adet</th>
+            <th>Malzeme</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- Try loading SheetJS (if blocked, we will fallback) -->
+<script>
+(function(){
+  var s = document.createElement('script');
+  s.src = "https://cdn.sheetjs.com/xlsx-latest/package/xlsx.full.min.js";
+  s.onload = function(){ document.getElementById('libStatus').innerHTML = "<span class='ok'>Excel kütüphanesi yüklendi (.xlsx)</span>"; };
+  s.onerror = function(){ document.getElementById('libStatus').innerHTML = "<span class='warn'>CDN engelli olabilir → .xls yedek modu kullanılacak</span>"; };
+  document.head.appendChild(s);
+})();
+</script>
+
+<script>
+const $ = s => document.querySelector(s);
+let outputRows = [];
+
+$("#runBtn").addEventListener("click", async () => {
+  const txt = await getText();
+  if(!txt || !txt.trim()){ alert("TXT içeriği yok."); return; }
+  const res = parseKesimText(txt);
+  outputRows = res.rows;
+  renderTable(outputRows);
+  $("#xlsxBtn").disabled = outputRows.length === 0;
+  $("#meta").innerHTML = `<span class="ok">Periyot:</span> <b>${res.periyot}</b> &nbsp;•&nbsp; <span class="ok">Satır:</span> ${outputRows.length}`;
+});
+
+$("#xlsxBtn").addEventListener("click", () => {
+  if(!outputRows.length) return;
+  const head = ["TOPLAM","Periyot","Sayfa","Kod10","Açıklama","Boy","En","Adet","Malzeme"];
+  const aoa = [head];
+  outputRows.forEach(r => aoa.push([r.TOPLAM,r.Periyot,r.Sayfa,r.Kod10,r.Açıklama,r.Boy,r.En,r.Adet,r.Malzeme]));
+
+  if (typeof XLSX !== "undefined" && XLSX && XLSX.utils) {
+    // Real .xlsx
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "kesim_cikti");
+    XLSX.writeFile(wb, "kesim_cikti_TOPLAM_pad.xlsx");
+  } else {
+    // Fallback .xls (HTML table) – Excel açar
+    const html = aoaToExcelHtml(aoa);
+    const blob = new Blob([html], {type: "application/vnd.ms-excel;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "kesim_cikti_TOPLAM_pad.xls";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+});
+
+async function getText(){
+  const f = $("#file").files[0];
+  if (f) return await f.text();
+  return $("#paste").value || "";
+}
+
+// === Açıklama temizleyici ===
+function cleanDesc(desc){
+  if(!desc) return "";
+  let s = String(desc).replace(/\s+/g," ").trim();
+  s = s.replace(/\s*\*+\s*$/,"").trim();                          // sondaki *** kaldır
+  s = s.replace(/\s+\d[\d.,]*(?:\s*(?:\*+|[,.;])\s*)*$/,"").trim(); // sondaki sayısal blokları kaldır
+  s = s.replace(/(^|\s)DF\s+(16|18)\s+MM\b/i, "$1MDF $2 MM");      // DF -> MDF
+  return s;
+}
+
+function parseKesimText(text){
+  const lines = text.split(/\r?\n/);
+
+  // Periyot: first [A-Z0-9]{6,}
+  let periyot = "PERIYOT";
+  for(let i=0;i<Math.min(200,lines.length);i++){
+    const s = (lines[i]||"").trim();
+    if (/^[A-Z0-9]{6,}$/.test(s) && !/^\d+$/.test(s)) { periyot = s; break; }
+  }
+
+  const patBlock = /\*{3}[^\r\n]*?(\d{8,})\s+([^\r\n]*)/;
+  const patPages = /^\s*(\d{1,3}(?:,\d{1,3})*)\b/;
+  const patNum   = /(\d+(?:[.,]\d+)*)/g;
+  const patLabel = /\b(LAKE|KAPLAMA)\b/i;
+
+  let currentMat = "", currentDesc = "";
+  const rows = [];
+
+  const cleanNum = (s) => {
+    s = (s||"").trim();
+    if (s.endsWith(",")) s = s.slice(0,-1);
+    const m = s.match(/^(\d+),00$/); // 530,00 -> 530
+    if (m) return m[1];
+    return s;
+  };
+
+  for(const ln of lines){
+    const mb = ln.match(patBlock);
+    if (mb){
+      currentMat = mb[1];
+      currentDesc = cleanDesc(mb[2]||"");
+      continue;
+    }
+    if (!currentMat) continue;
+
+    const mp = ln.match(patPages);
+    if (!mp) continue;
+    const pages = mp[1].split(",").map(s=>s.trim()).filter(Boolean);
+    const rest = ln.slice(mp[0].length);
+
+    const labelMatch = rest.match(patLabel);
+    const label = labelMatch ? labelMatch[1].toUpperCase() : "";
+
+    const nums = [...rest.matchAll(patNum)].map(m=>m[1]);
+    let boy="", en="", adet="";
+    if (nums.length >= 5){
+      boy = cleanNum(nums[1]); en = cleanNum(nums[2]); adet = cleanNum(nums[4]);
+    } else if (nums.length >= 3){
+      boy = cleanNum(nums[nums.length-3]); en = cleanNum(nums[nums.length-2]); adet = cleanNum(nums[nums.length-1]);
+    }
+
+    for(const pg of pages){
+      const TOPLAM = `${periyot}-${pg},,${boy},${en},${adet}` + ",,,,,,,,";
+      rows.push({ TOPLAM, Periyot: periyot, Sayfa: pg, Kod10: currentMat, Açıklama: currentDesc, Boy: boy, En: en, Adet: adet, Malzeme: label });
+    }
+  }
+  return { periyot, rows };
+}
+
+function renderTable(rows){
+  const tb = $("#tbl tbody");
+  tb.innerHTML = "";
+  rows.slice(0, 10000).forEach((r, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${i+1}</td>
+      <td>${escapeHtml(r.TOPLAM)}</td>
+      <td>${escapeHtml(r.Periyot)}</td>
+      <td>${escapeHtml(r.Sayfa)}</td>
+      <td>${escapeHtml(r.Kod10)}</td>
+      <td>${escapeHtml(r.Açıklama)}</td>
+      <td>${escapeHtml(r.Boy)}</td>
+      <td>${escapeHtml(r.En)}</td>
+      <td>${escapeHtml(r.Adet)}</td>
+      <td>${escapeHtml(r.Malzeme)}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+function escapeHtml(s){ return String(s).replace(/[&<>]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])); }
+
+// Fallback exporter to .xls (HTML format)
+function aoaToExcelHtml(aoa){
+  const rows = aoa.map(r => "<tr>"+r.map(c => "<td>"+escapeHtml(c==null?"":c)+"</td>").join("")+"</tr>").join("");
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><table>${rows}</table></body></html>`;
+}
+</script>
+</body>
+</html>
+"""
+open('/mnt/data/kesim_dashboard_v5.html','w',encoding='utf-8').write(html)
+print("Saved /mnt/data/kesim_dashboard_v5.html")
